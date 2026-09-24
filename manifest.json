@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "jkarmel.pdfx",
+  "name": "PDFX",
+  "version": "0.1.0",
+  "author": "Jeremy Karmel",
+  "description": "Sign and fill PDFs natively. Adds a Sign a PDF menu entry and an IPC target for keybindings; installs the pdfx package on first use.",
+  "license": "MIT",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" }
+}

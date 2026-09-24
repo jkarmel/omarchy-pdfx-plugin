@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Menu action for PDFX: pick a PDF (portal file chooser) and open it in PDFX
+on the active workspace. Offers to install the pdfx package when it is missing.
+"""
+import json, os, shutil, subprocess, sys, urllib.parse
+
+
+def notify(summary, body=""):
+    subprocess.run(["notify-send", "-a", "PDFX", summary, body], check=False)
+
+
+def active_workspace():
+    try:
+        return str(json.loads(subprocess.check_output(["hyprctl", "activeworkspace", "-j"], text=True)).get("name", ""))
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
+        return ""
+
+
+def offer_install():
+    notify("PDFX is not installed", "Opening a terminal to install the pdfx package.")
+    terminal = shutil.which("omarchy-launch-floating-terminal-with-presentation") or shutil.which("omarchy-launch-floating-terminal")
+    command = "omarchy pkg add pdfx; echo; read -p 'Press Enter to close'"
+    if terminal:
+        subprocess.Popen([terminal, "bash", "-c", command], start_new_session=True)
+    else:
+        subprocess.Popen(["omarchy-launch-terminal", "bash", "-c", command], start_new_session=True)
+
+
+def pick_pdf():
+    import gi
+    gi.require_version("Gio", "2.0"); gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    sender = bus.get_unique_name()[1:].replace(".", "_")
+    token = f"pdfxmenu{os.getpid()}"
+    request_path = f"/org/freedesktop/portal/desktop/request/{sender}/{token}"
+    loop = GLib.MainLoop()
+    chosen = {"path": None}
+
+    def on_response(_c, _s, _p, _i, _sig, params):
+        code, results = params.unpack()
+        if code == 0 and results.get("uris"):
+            chosen["path"] = urllib.parse.unquote(urllib.parse.urlparse(results["uris"][0]).path)
+        loop.quit()
+
+    bus.signal_subscribe("org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response",
+                         request_path, None, Gio.DBusSignalFlags.NONE, on_response)
+    options = {
+        "handle_token": GLib.Variant("s", token),
+        "filters": GLib.Variant("a(sa(us))", [("PDF", [(1, "application/pdf"), (0, "*.pdf")])]),
+        "current_folder": GLib.Variant("ay", os.path.expanduser("~/Downloads").encode() + b"\0"),
+    }
+    bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                  "org.freedesktop.portal.FileChooser", "OpenFile",
+                  GLib.Variant("(ssa{sv})", ("", "Open PDF in PDFX", options)),
+                  GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
+    GLib.timeout_add_seconds(600, loop.quit)
+    loop.run()
+    return chosen["path"]
+
+
+def main():
+    pdfx = shutil.which("pdfx") or os.path.expanduser("~/.local/bin/pdfx")
+    if not os.path.exists(pdfx):
+        offer_install()
+        return 0
+    path = sys.argv[1] if len(sys.argv) > 1 else pick_pdf()
+    if not path:
+        return 0
+    workspace = active_workspace()
+    command = [pdfx, "open", path] + (["--workspace", workspace] if workspace else ["--here"])
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        notify("PDFX could not open the file", (result.stderr or result.stdout).strip()[:300])
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
