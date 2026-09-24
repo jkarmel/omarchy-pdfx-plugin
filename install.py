@@ -28,6 +28,16 @@ def main():
     text = text.replace("{\n", "{\n" + BLOCK, 1)
     MENU.write_text(text)
     subprocess.run(["omarchy-shell", "-q", "shell", "rescanPlugins"], check=False)
+    # The rescan is asynchronous; wait until the shell lists the plugin before enabling it.
+    import json, time
+    for _ in range(50):
+        try:
+            listed = json.loads(subprocess.check_output(["omarchy", "plugin", "list", "--json"], text=True))
+            if any(entry.get("id") == PLUGIN_ID for entry in listed):
+                break
+        except (subprocess.SubprocessError, json.JSONDecodeError):
+            pass
+        time.sleep(0.1)
     subprocess.run(["omarchy", "plugin", "enable", PLUGIN_ID], check=False)
     print(f"installed {PLUGIN_ID} to {DEST}; menu entry 'Sign a PDF' added to {MENU}")
     return 0
